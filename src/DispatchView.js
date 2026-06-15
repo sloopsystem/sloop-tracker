@@ -1,10 +1,10 @@
 // src/DispatchView.js
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import QRBlock from "./QRBlock";
 import LiveMap from "./LiveMap";
 import LabelModal from "./LabelModal";
 import printLabel from "./printLabel";
-import { saveDelivery } from "./db";
+import { saveDelivery, deleteDelivery, watchAllDeliveries, watchConfig, saveConfig } from "./db";
 
 const STATUS = {
   pending:    { label: "Pendiente",   color: "#94a3b8", icon: "📦" },
@@ -13,128 +13,189 @@ const STATUS = {
   delivered:  { label: "Entregado",   color: "#10b981", icon: "✅" },
 };
 
-const genCode  = () => Math.random().toString(36).substring(2, 8).toUpperCase();
-const nowStr   = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-const dateStr  = () => new Date().toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+const genCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+const nowStr  = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const dateStr = () => new Date().toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
 
-export default function DispatchView({ delivery, setDelivery }) {
+export default function DispatchView() {
+  const [deliveries, setDeliveries] = useState({});
+  const [config, setConfig] = useState({});
+  const [selected, setSelected] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+  const [newPin, setNewPin] = useState("");
+  const [pinSaved, setPinSaved] = useState(false);
+
+  useEffect(() => {
+    const u1 = watchAllDeliveries(setDeliveries);
+    const u2 = watchConfig(cfg => { setConfig(cfg); setNewPin(cfg.pin || "1234"); });
+    return () => { u1(); u2(); };
+  }, []);
+
+  const delivery = selected ? deliveries[selected] : null;
 
   const create = () => {
     const d = { code: genCode(), status: "pending", createdAt: nowStr(), createdDate: dateStr(), trail: [] };
-    setDelivery(d);
     saveDelivery(d);
+    setSelected(d.code);
   };
 
-  const reset = () => { setDelivery(null); };
+  const remove = (code) => {
+    deleteDelivery(code);
+    if (selected === code) setSelected(null);
+  };
 
   const saveLabel = (labelData) => {
     const updated = { ...delivery, label: labelData };
-    setDelivery(updated);
     saveDelivery(updated);
     setShowModal(false);
   };
 
+  const savePin = () => {
+    if (newPin.length < 4) return;
+    saveConfig({ ...config, pin: newPin });
+    setPinSaved(true);
+    setTimeout(() => setPinSaved(false), 2000);
+  };
+
+  const activeList = Object.values(deliveries).filter(d => d.status !== "delivered");
+  const doneList   = Object.values(deliveries).filter(d => d.status === "delivered");
+
   return (
     <div style={{ padding: "0 0 40px" }}>
-      {showModal && delivery && (
-        <LabelModal delivery={delivery} onSave={saveLabel} onClose={() => setShowModal(false)} />
-      )}
+      {showModal && delivery && <LabelModal delivery={delivery} onSave={saveLabel} onClose={() => setShowModal(false)} />}
 
-      <div style={{ background: "#0f172a", padding: "20px 20px 16px", borderBottom: "2px solid #7c3aed" }}>
-        <div style={{ color: "#a78bfa", fontSize: 11, fontFamily: "monospace", letterSpacing: 2, marginBottom: 4 }}>PANEL DE DESPACHO</div>
-        <div style={{ color: "#f8fafc", fontSize: 22, fontWeight: 700 }}>Crear Entrega</div>
+      {/* Header */}
+      <div style={{ background: "#0f172a", padding: "20px 20px 16px", borderBottom: "2px solid #7c3aed", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ color: "#a78bfa", fontSize: 11, fontFamily: "monospace", letterSpacing: 2, marginBottom: 4 }}>PANEL DE DESPACHO</div>
+          <div style={{ color: "#f8fafc", fontSize: 22, fontWeight: 700 }}>Entregas</div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setShowConfig(!showConfig)}
+            style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px solid #334155", background: "none", color: "#94a3b8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+            ⚙️
+          </button>
+          <button onClick={create}
+            style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "#7c3aed", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            + Nueva
+          </button>
+        </div>
       </div>
 
-      <div style={{ padding: "20px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
-        {!delivery ? (
-          <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, textAlign: "center" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
-            <div style={{ color: "#94a3b8", fontSize: 14, marginBottom: 16 }}>
-              Genera un código único para iniciar una nueva entrega.
-            </div>
-            <button onClick={create}
-              style={{ padding: "12px 28px", borderRadius: 10, border: "none", background: "#7c3aed", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
-              + Nueva Entrega
+      {/* Config panel */}
+      {showConfig && (
+        <div style={{ background: "#1e293b", borderBottom: "1px solid #334155", padding: 16 }}>
+          <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 12 }}>⚙️ CONFIGURACIÓN</div>
+          <div style={{ marginBottom: 4, color: "#64748b", fontSize: 11 }}>PIN del conductor (mín. 4 dígitos)</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} placeholder="1234"
+              style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: "1.5px solid #334155", background: "#0f172a", color: "#f8fafc", fontSize: 16, textAlign: "center", letterSpacing: 6, outline: "none" }} />
+            <button onClick={savePin}
+              style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: pinSaved ? "#10b981" : "#7c3aed", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              {pinSaved ? "✓ Guardado" : "Guardar"}
             </button>
           </div>
-        ) : (
-          <>
-            {/* Etiqueta */}
-            <div>
-              <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 10 }}>🏷 ETIQUETA DE ENVÍO</div>
-              <LabelPreview delivery={delivery} onEdit={() => setShowModal(true)} onPrint={() => printLabel(delivery)} />
-            </div>
+        </div>
+      )}
 
-            {/* Estado */}
-            <div style={{ background: "#1e293b", borderRadius: 12, padding: 16 }}>
-              <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 12 }}>ESTADO</div>
-              {Object.entries(STATUS).map(([k, v]) => {
-                const active = delivery.status === k;
-                const past = Object.keys(STATUS).indexOf(k) < Object.keys(STATUS).indexOf(delivery.status);
-                return (
-                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, opacity: past || active ? 1 : 0.3 }}>
-                    <span style={{ fontSize: 18 }}>{v.icon}</span>
-                    <span style={{ color: active ? v.color : past ? "#64748b" : "#475569", fontWeight: active ? 700 : 400, fontSize: 13 }}>{v.label}</span>
-                    {active && <span style={{ color: v.color, fontSize: 11, marginLeft: "auto" }}>← actual</span>}
-                  </div>
-                );
-              })}
-            </div>
+      <div style={{ padding: "16px 16px 0" }}>
 
-            {/* Mapa live */}
-            {delivery.currentPos && delivery.status === "in_transit" && (
-              <div style={{ background: "#1e293b", borderRadius: 12, padding: 16 }}>
-                <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 10 }}>POSICIÓN EN VIVO</div>
-                <LiveMap lat={delivery.currentPos.lat} lng={delivery.currentPos.lng} trail={delivery.trail || []} />
-              </div>
-            )}
+        {activeList.length === 0 && (
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 36, marginBottom: 10 }}>📦</div>
+            <div style={{ color: "#94a3b8", fontSize: 14 }}>No hay entregas activas. Crea una nueva.</div>
+          </div>
+        )}
 
-            <button onClick={reset}
-              style={{ padding: 10, borderRadius: 8, border: "1.5px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-              🗑 Cancelar y crear nueva entrega
-            </button>
-          </>
+        {activeList.map(d => (
+          <DeliveryCard key={d.code} delivery={d} selected={selected === d.code}
+            onSelect={() => setSelected(selected === d.code ? null : d.code)}
+            onEdit={() => { setSelected(d.code); setShowModal(true); }}
+            onPrint={() => printLabel(d)}
+            onDelete={() => remove(d.code)}
+          />
+        ))}
+
+        {doneList.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ color: "#475569", fontSize: 11, fontFamily: "monospace", marginBottom: 8 }}>COMPLETADOS HOY</div>
+            {doneList.map(d => (
+              <DeliveryCard key={d.code} delivery={d} done
+                selected={selected === d.code}
+                onSelect={() => setSelected(selected === d.code ? null : d.code)}
+                onDelete={() => remove(d.code)}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-function LabelPreview({ delivery, onEdit, onPrint }) {
-  const { label = {}, code } = delivery;
-  const from = label.from || {}, to = label.to || {};
-  const hasData = from.name || to.name;
+function DeliveryCard({ delivery, selected, onSelect, onEdit, onPrint, onDelete, done }) {
+  const { code, status, label = {}, currentPos, trail, lastUpdate } = delivery;
+  const s = STATUS[status] || STATUS.pending;
+  const to = label.to || {};
+
   return (
-    <div style={{ background: "#1e293b", borderRadius: 12, overflow: "hidden", border: "1.5px solid #7c3aed40" }}>
-      <div style={{ background: "#f8fafc", padding: 14, display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <div style={{ background: "#fff", padding: 5, borderRadius: 6, border: "1px solid #e2e8f0", flexShrink: 0 }}>
-          <QRBlock value={code} size={72} dark="#0f172a" />
+    <div style={{ background: "#1e293b", borderRadius: 12, marginBottom: 12, overflow: "hidden", border: selected ? `1.5px solid ${s.color}` : "1.5px solid #334155", opacity: done ? 0.6 : 1 }}>
+      <div onClick={onSelect} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+        <div style={{ background: "#fff", padding: 4, borderRadius: 6, flexShrink: 0 }}>
+          <QRBlock value={code} size={48} dark="#0f172a" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 22, color: "#0f172a", letterSpacing: 4 }}>{code}</div>
-          {hasData ? (
-            <>
-              {from.name && <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>DE: <b style={{ color: "#0f172a" }}>{from.name}</b>{from.city ? ` · ${from.city}` : ""}</div>}
-              {to.name   && <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>PARA: <b style={{ color: "#0f172a" }}>{to.name}</b>{to.city ? ` · ${to.city}` : ""}</div>}
-              {to.address && <div style={{ fontSize: 10, color: "#64748b", marginTop: 1 }}>{to.address}</div>}
-              {label.notes && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 3, fontStyle: "italic" }}>📌 {label.notes}</div>}
-            </>
-          ) : (
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Sin datos — completa la etiqueta</div>
-          )}
+          <div style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 18, color: "#f8fafc", letterSpacing: 3 }}>{code}</div>
+          {to.name
+            ? <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>→ {to.name}{to.city ? ` · ${to.city}` : ""}</div>
+            : <div style={{ color: "#475569", fontSize: 12, marginTop: 2 }}>Sin destinatario — completa la etiqueta</div>
+          }
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 18 }}>{s.icon}</div>
+          <div style={{ color: s.color, fontSize: 11, fontWeight: 600 }}>{s.label}</div>
         </div>
       </div>
-      <div style={{ display: "flex", borderTop: "1px solid #e2e8f0" }}>
-        <button onClick={onEdit}
-          style={{ flex: 1, padding: "11px 0", background: "#1e293b", border: "none", color: "#a78bfa", fontWeight: 600, fontSize: 13, cursor: "pointer", borderRight: "1px solid #334155" }}>
-          ✏️ {hasData ? "Editar etiqueta" : "Completar etiqueta"}
-        </button>
-        <button onClick={onPrint} disabled={!hasData}
-          style={{ flex: 1, padding: "11px 0", background: "#1e293b", border: "none", color: hasData ? "#10b981" : "#475569", fontWeight: 600, fontSize: 13, cursor: hasData ? "pointer" : "not-allowed" }}>
-          🖨 Imprimir etiqueta
-        </button>
-      </div>
+
+      {selected && (
+        <div style={{ borderTop: "1px solid #334155" }}>
+          {to.note && (
+            <div style={{ padding: "8px 14px", background: "#0f172a40", borderBottom: "1px solid #334155" }}>
+              <span style={{ color: "#f59e0b", fontSize: 11 }}>📌 </span>
+              <span style={{ color: "#94a3b8", fontSize: 12, fontStyle: "italic" }}>{to.note}</span>
+            </div>
+          )}
+          {currentPos && status === "in_transit" && (
+            <div style={{ padding: "12px 14px", borderBottom: "1px solid #334155" }}>
+              <div style={{ color: "#94a3b8", fontSize: 10, fontFamily: "monospace", marginBottom: 8 }}>📍 EN VIVO · {lastUpdate}</div>
+              <LiveMap lat={currentPos.lat} lng={currentPos.lng} trail={trail || []} />
+            </div>
+          )}
+          {!done && (
+            <div style={{ display: "flex" }}>
+              <button onClick={onEdit}
+                style={{ flex: 1, padding: "10px 0", background: "none", border: "none", color: "#a78bfa", fontWeight: 600, fontSize: 12, cursor: "pointer", borderRight: "1px solid #334155" }}>
+                ✏️ Etiqueta
+              </button>
+              <button onClick={onPrint} disabled={!to.name}
+                style={{ flex: 1, padding: "10px 0", background: "none", border: "none", color: to.name ? "#10b981" : "#475569", fontWeight: 600, fontSize: 12, cursor: to.name ? "pointer" : "default", borderRight: "1px solid #334155" }}>
+                🖨 Imprimir
+              </button>
+              <button onClick={onDelete}
+                style={{ flex: 1, padding: "10px 0", background: "none", border: "none", color: "#f87171", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
+                🗑 Eliminar
+              </button>
+            </div>
+          )}
+          {done && (
+            <button onClick={onDelete}
+              style={{ width: "100%", padding: "10px 0", background: "none", border: "none", color: "#475569", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
+              🗑 Eliminar registro
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

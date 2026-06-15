@@ -1,4 +1,4 @@
-/// src/DriverView.js
+// src/DriverView.js
 import { useState, useEffect, useRef } from "react";
 import LiveMap from "./LiveMap";
 import QRBlock from "./QRBlock";
@@ -30,49 +30,46 @@ function QRScanner({ onScan, onClose }) {
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const rafRef = useRef(null);
-  const [status, setStatus] = useState("starting"); // starting | scanning | error
+  const activeRef = useRef(true);
+  const [status, setStatus] = useState("ready"); // ready | scanning | error
+
+  const startCamera = async () => {
+    setStatus("scanning");
+    await loadJsQR();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } }
+      });
+      if (!activeRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        video.play().then(() => scan()).catch(() => setStatus("error"));
+      };
+    } catch (e) {
+      setStatus("error");
+    }
+  };
+
+  const scan = () => {
+    if (!activeRef.current || !videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    if (video.readyState < 2) { rafRef.current = requestAnimationFrame(scan); return; }
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+    if (code && code.data) { onScan(code.data); return; }
+    rafRef.current = requestAnimationFrame(scan);
+  };
 
   useEffect(() => {
-    let active = true;
-
-    const start = async () => {
-      await loadJsQR();
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
-        if (!active) { stream.getTracks().forEach(t => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.setAttribute("playsinline", true);
-          await videoRef.current.play();
-          setStatus("scanning");
-          scan();
-        }
-      } catch (e) {
-        setStatus("error");
-      }
-    };
-
-    const scan = () => {
-      if (!active || !videoRef.current || !canvasRef.current) return;
-      const video = videoRef.current;
-      if (video.readyState !== video.HAVE_ENOUGH_DATA) { rafRef.current = requestAnimationFrame(scan); return; }
-      const canvas = canvasRef.current;
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
-      if (code) { onScan(code.data); return; }
-      rafRef.current = requestAnimationFrame(scan);
-    };
-
-    start();
     return () => {
-      active = false;
+      activeRef.current = false;
       cancelAnimationFrame(rafRef.current);
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
@@ -84,26 +81,43 @@ function QRScanner({ onScan, onClose }) {
         <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 16 }}>Escanear QR</div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 24, cursor: "pointer" }}>✕</button>
       </div>
-      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <video ref={videoRef} playsInline muted style={{ width: "100%", maxWidth: 480, borderRadius: 12, display: status === "scanning" ? "block" : "none" }} />
+
+      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20 }}>
+        <video ref={videoRef} playsInline muted style={{ width: "100%", maxWidth: 480, display: status === "scanning" ? "block" : "none" }} />
         <canvas ref={canvasRef} style={{ display: "none" }} />
-        {/* Viewfinder overlay */}
+
         {status === "scanning" && (
-          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 220, height: 220, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)", pointerEvents: "none" }} />
+          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 220, height: 220, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.6)", pointerEvents: "none" }} />
         )}
-        {status === "starting" && (
-          <div style={{ color: "#94a3b8", fontSize: 14 }}>Iniciando cámara…</div>
+
+        {status === "ready" && (
+          <div style={{ textAlign: "center", padding: "0 32px" }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📷</div>
+            <button onClick={startCamera}
+              style={{ padding: "14px 32px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>
+              Activar cámara
+            </button>
+            <div style={{ color: "#475569", fontSize: 12, marginTop: 12 }}>
+              Permite el acceso a la cámara cuando iOS lo solicite
+            </div>
+          </div>
         )}
+
         {status === "error" && (
           <div style={{ textAlign: "center", padding: "0 24px" }}>
             <div style={{ color: "#f87171", fontSize: 14, marginBottom: 8 }}>No se pudo acceder a la cámara.</div>
-            <div style={{ color: "#94a3b8", fontSize: 12 }}>Ingresa el código manualmente abajo.</div>
+            <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 16 }}>Cierra y usa el código manual.</div>
+            <button onClick={startCamera}
+              style={{ padding: "10px 24px", borderRadius: 8, border: "1.5px solid #334155", background: "none", color: "#60a5fa", fontSize: 13, cursor: "pointer" }}>
+              Reintentar
+            </button>
           </div>
         )}
       </div>
+
       {status === "scanning" && (
         <div style={{ padding: "16px 20px", textAlign: "center", color: "#60a5fa", fontSize: 13 }}>
-          Apunta la cámara al código QR de la etiqueta
+          Apunta al código QR de la etiqueta
         </div>
       )}
     </div>

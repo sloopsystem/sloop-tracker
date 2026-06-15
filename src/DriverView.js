@@ -1,4 +1,4 @@
-// src/DriverView.js
+/// src/DriverView.js
 import { useState, useEffect, useRef } from "react";
 import LiveMap from "./LiveMap";
 import QRBlock from "./QRBlock";
@@ -13,37 +13,67 @@ const STATUS = {
 
 const nowStr = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-// ── QR Scanner using device camera ────────────────────────────────────────────
+// ── Load jsQR (works on iOS Safari) ──────────────────────────────────────────
+function loadJsQR() {
+  return new Promise((res) => {
+    if (window.jsQR) return res();
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
+    s.onload = res;
+    document.head.appendChild(s);
+  });
+}
+
+// ── QR Scanner — compatible with iOS Safari ───────────────────────────────────
 function QRScanner({ onScan, onClose }) {
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const [error, setError] = useState("");
+  const rafRef = useRef(null);
+  const [status, setStatus] = useState("starting"); // starting | scanning | error
 
   useEffect(() => {
-    let interval;
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-      .then(stream => {
+    let active = true;
+
+    const start = async () => {
+      await loadJsQR();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        if (!active) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-
-        // Use BarcodeDetector if available
-        if ("BarcodeDetector" in window) {
-          const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-          interval = setInterval(async () => {
-            if (!videoRef.current) return;
-            try {
-              const codes = await detector.detect(videoRef.current);
-              if (codes.length > 0) {
-                onScan(codes[0].rawValue);
-              }
-            } catch (_) {}
-          }, 500);
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute("playsinline", true);
+          await videoRef.current.play();
+          setStatus("scanning");
+          scan();
         }
-      })
-      .catch(() => setError("No se pudo acceder a la cámara."));
+      } catch (e) {
+        setStatus("error");
+      }
+    };
 
+    const scan = () => {
+      if (!active || !videoRef.current || !canvasRef.current) return;
+      const video = videoRef.current;
+      if (video.readyState !== video.HAVE_ENOUGH_DATA) { rafRef.current = requestAnimationFrame(scan); return; }
+      const canvas = canvasRef.current;
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+      if (code) { onScan(code.data); return; }
+      rafRef.current = requestAnimationFrame(scan);
+    };
+
+    start();
     return () => {
-      clearInterval(interval);
+      active = false;
+      cancelAnimationFrame(rafRef.current);
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
@@ -54,15 +84,28 @@ function QRScanner({ onScan, onClose }) {
         <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 16 }}>Escanear QR</div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 24, cursor: "pointer" }}>✕</button>
       </div>
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
-        <video ref={videoRef} autoPlay playsInline style={{ width: "100%", maxWidth: 400, borderRadius: 12 }} />
-        {error && <div style={{ color: "#f87171", fontSize: 13 }}>{error}</div>}
-        {!("BarcodeDetector" in window) && (
-          <div style={{ color: "#f59e0b", fontSize: 12, textAlign: "center", padding: "0 20px" }}>
-            Tu navegador no soporta escaneo automático. Ingresa el código manualmente.
+      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <video ref={videoRef} playsInline muted style={{ width: "100%", maxWidth: 480, borderRadius: 12, display: status === "scanning" ? "block" : "none" }} />
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+        {/* Viewfinder overlay */}
+        {status === "scanning" && (
+          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 220, height: 220, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)", pointerEvents: "none" }} />
+        )}
+        {status === "starting" && (
+          <div style={{ color: "#94a3b8", fontSize: 14 }}>Iniciando cámara…</div>
+        )}
+        {status === "error" && (
+          <div style={{ textAlign: "center", padding: "0 24px" }}>
+            <div style={{ color: "#f87171", fontSize: 14, marginBottom: 8 }}>No se pudo acceder a la cámara.</div>
+            <div style={{ color: "#94a3b8", fontSize: 12 }}>Ingresa el código manualmente abajo.</div>
           </div>
         )}
       </div>
+      {status === "scanning" && (
+        <div style={{ padding: "16px 20px", textAlign: "center", color: "#60a5fa", fontSize: 13 }}>
+          Apunta la cámara al código QR de la etiqueta
+        </div>
+      )}
     </div>
   );
 }

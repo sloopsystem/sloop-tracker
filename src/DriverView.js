@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import LiveMap from "./LiveMap";
 import QRBlock from "./QRBlock";
 import { saveDelivery, watchAllDeliveries, watchConfig } from "./db";
+import { sendEmail } from "./email";
 
 const STATUS = {
   pending:    { label: "Pendiente",   color: "#94a3b8", icon: "📦" },
@@ -18,7 +19,7 @@ function loadJsQR() {
   return new Promise((res) => {
     if (window.jsQR) return res();
     const s = document.createElement("script");
-s.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
+    s.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
     s.onload = res;
     document.head.appendChild(s);
   });
@@ -95,7 +96,7 @@ function QRScanner({ onScan, onClose }) {
 
       {/* Video — always in DOM so iOS can use it */}
       <video ref={videoRef} playsInline muted autoPlay
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: status === "scanning" ? 1 : 0 }} />
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: status === "scanning" ? "block" : "none" }} />
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
       {/* Viewfinder */}
@@ -301,6 +302,10 @@ export default function DriverView() {
     setTracking(t => ({ ...t, [code]: true }));
     const updated = { ...d, status: "in_transit", transitAt: nowStr() };
     saveDelivery(updated);
+    // Email al cliente
+    if (d.label?.to?.email) {
+      sendEmail({ to: d.label.to.email, type: "in_transit", code, name: d.label.to.name });
+    }
   };
 
   const confirmDelivery = (code) => {
@@ -312,6 +317,10 @@ export default function DriverView() {
     const d = deliveries[code];
     const updated = { ...d, status: "delivered", deliveredAt: nowStr() };
     saveDelivery(updated);
+    // Email al cliente
+    if (d.label?.to?.email) {
+      sendEmail({ to: d.label.to.email, type: "delivered", code, name: d.label.to.name });
+    }
     setShowPin(null);
   };
 

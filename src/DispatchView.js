@@ -5,6 +5,7 @@ import LiveMap from "./LiveMap";
 import LabelModal from "./LabelModal";
 import printLabel from "./printLabel";
 import { saveDelivery, deleteDelivery, watchAllDeliveries, watchConfig, saveConfig } from "./db";
+import { sendEmail } from "./email";
 
 const STATUS = {
   pending:    { label: "Pendiente",   color: "#94a3b8", icon: "📦" },
@@ -48,6 +49,15 @@ export default function DispatchView() {
   const saveLabel = (labelData) => {
     const updated = { ...delivery, label: labelData };
     saveDelivery(updated);
+    // Enviar email de confirmación al destinatario si tiene email
+    if (labelData.to?.email) {
+      sendEmail({
+        to: labelData.to.email,
+        type: "created",
+        code: delivery.code,
+        name: labelData.to.name,
+      });
+    }
     setShowModal(false);
   };
 

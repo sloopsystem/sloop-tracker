@@ -1,7 +1,7 @@
 // api/send-email.js
 // Vercel Serverless Function — intermediario seguro para Resend
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }

@@ -440,7 +440,15 @@ export default function DriverView() {
     saveDelivery(updated);
     // Email al cliente
     if (d.label?.to?.email) {
-      sendEmail({ to: d.label.to.email, type: "delivered", code, name: d.label.to.name });
+      sendEmail({ 
+        to: d.label.to.email, 
+        type: "delivered", 
+        code, 
+        name: d.label.to.name,
+        receiverName: receiverData.receiverName,
+        receiverRut: receiverData.receiverRut,
+        photoUrl: receiverData.photoUrl,
+      });
     }
     setShowPin(null);
   };

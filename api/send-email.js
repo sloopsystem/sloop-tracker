@@ -6,7 +6,7 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { to, type, code, name } = req.body;
+  const { to, type, code, name, receiverName, receiverRut, photoUrl } = req.body;
 
   if (!to || !type || !code) {
     return res.status(400).json({ error: "Missing required fields" });
@@ -73,7 +73,14 @@ module.exports = async function handler(req, res) {
             <div style="background:#ecfdf5;border:1.5px solid #10b981;border-radius:8px;padding:16px;text-align:center;margin:16px 0;">
               <span style="color:#10b981;font-size:40px;">✅</span>
               <p style="color:#065f46;font-weight:700;margin:8px 0 0;">Entrega completada</p>
+              ${receiverName ? `<p style="color:#065f46;margin:4px 0;">Recibido por: <b>${receiverName}</b></p>` : ""}
+              ${receiverRut ? `<p style="color:#065f46;margin:4px 0 0;">RUT: ${receiverRut}</p>` : ""}
             </div>
+            ${photoUrl ? `
+            <div style="margin:16px 0;">
+              <p style="color:#334155;font-weight:600;margin-bottom:8px;">📷 Foto de la entrega:</p>
+              <img src="${photoUrl}" alt="Foto de entrega" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;" />
+            </div>` : ""}
             <p style="color:#334155;">Gracias por confiar en Onloop.</p>
           </div>
         </div>

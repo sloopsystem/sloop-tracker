@@ -13,155 +13,151 @@ const STATUS = {
 
 const nowStr = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-// ── Load jsQR ─────────────────────────────────────────────────────────────────
-function loadJsQR() {
-  return new Promise((res) => {
-    if (window.jsQR) return res();
+// ── Load ZXing (best cross-platform QR/barcode scanner) ───────────────────────
+function loadZXing() {
+  return new Promise((res, rej) => {
+    if (window.ZXing) return res();
     const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
-    s.onload = res;
+    s.src = "https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js";
+    s.onload = () => res();
+    s.onerror = rej;
     document.head.appendChild(s);
   });
 }
 
-// ── QR Scanner ────────────────────────────────────────────────────────────────
+// ── QR Scanner using ZXing ────────────────────────────────────────────────────
 function QRScanner({ onScan, onClose }) {
-  const containerRef = useRef(null);
-  const stateRef = useRef({ active: true, stream: null, raf: null });
-  const [msg, setMsg] = useState("Iniciando cámara…");
-  const [failed, setFailed] = useState(false);
+  const videoRef = useRef(null);
+  const readerRef = useRef(null);
+  const [status, setStatus] = useState("loading"); // loading | scanning | error
+  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    let video;
-    let canvas;
+    let reader;
+    let stopped = false;
 
     const start = async () => {
-      await loadJsQR();
-      if (!stateRef.current.active) return;
-
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
-        if (!stateRef.current.active) { stream.getTracks().forEach(t => t.stop()); return; }
-        stateRef.current.stream = stream;
+        await loadZXing();
+        if (stopped) return;
 
-        // Create video directly in DOM — bypass React for srcObject
-        video = document.createElement("video");
-        video.setAttribute("playsinline", "true");
-        video.setAttribute("muted", "true");
-        video.autoplay = true;
-        video.muted = true;
-        video.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
-        video.srcObject = stream;
+        reader = new window.ZXing.BrowserMultiFormatReader();
+        readerRef.current = reader;
 
-        canvas = document.createElement("canvas");
-        canvas.style.display = "none";
+        // Get available cameras
+        const devices = await window.ZXing.BrowserCodeReader.listVideoInputDevices();
+        if (stopped) return;
 
-        if (containerRef.current) {
-          containerRef.current.appendChild(video);
-          containerRef.current.appendChild(canvas);
+        // Prefer back camera
+        const back = devices.find(d =>
+          d.label.toLowerCase().includes("back") ||
+          d.label.toLowerCase().includes("rear") ||
+          d.label.toLowerCase().includes("environment") ||
+          d.label.toLowerCase().includes("trasera")
+        );
+        const deviceId = back ? back.deviceId : (devices[0]?.deviceId);
+
+        if (!deviceId) {
+          setErrorMsg("No se encontró cámara disponible.");
+          setStatus("error");
+          return;
         }
 
-        video.onloadedmetadata = () => {
-          video.play().then(() => {
-            setMsg("");
-            scan();
-          }).catch(() => setFailed(true));
-        };
+        setStatus("scanning");
 
-        video.onerror = () => setFailed(true);
+        await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result, err) => {
+          if (result && !stopped) {
+            stopped = true;
+            reader.reset();
+            onScan(result.getText());
+          }
+        });
 
       } catch (err) {
-        setFailed(true);
-        setMsg("No se pudo acceder a la cámara.");
+        if (!stopped) {
+          setErrorMsg("No se pudo acceder a la cámara. Verifica los permisos.");
+          setStatus("error");
+        }
       }
-    };
-
-    const scan = () => {
-      if (!stateRef.current.active || !video || !canvas) return;
-      if (video.readyState < 2) { stateRef.current.raf = requestAnimationFrame(scan); return; }
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-      if (code && code.data) {
-        cleanup();
-        onScan(code.data);
-        return;
-      }
-      stateRef.current.raf = requestAnimationFrame(scan);
-    };
-
-    const cleanup = () => {
-      stateRef.current.active = false;
-      cancelAnimationFrame(stateRef.current.raf);
-      if (stateRef.current.stream) stateRef.current.stream.getTracks().forEach(t => t.stop());
     };
 
     start();
+
     return () => {
-      cleanup();
-      // Remove video element from DOM
-      if (containerRef.current) containerRef.current.innerHTML = "";
+      stopped = true;
+      if (readerRef.current) {
+        try { readerRef.current.reset(); } catch (_) {}
+      }
     };
   }, []);
 
-  // File fallback
-  const inputRef = useRef(null);
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setMsg("Procesando…");
-    await loadJsQR();
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const MAX = 1024;
-      let w = img.width, h = img.height;
-      if (w > MAX || h > MAX) { if (w > h) { h = Math.round(h*MAX/w); w = MAX; } else { w = Math.round(w*MAX/h); h = MAX; } }
-      const c = document.createElement("canvas");
-      c.width = w; c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
-      const tryScale = (s) => { const sw=Math.round(w*s),sh=Math.round(h*s),c2=document.createElement("canvas"); c2.width=sw; c2.height=sh; c2.getContext("2d").drawImage(c,0,0,sw,sh); const id=c2.getContext("2d").getImageData(0,0,sw,sh); return window.jsQR(id.data,id.width,id.height,{inversionAttempts:"attemptBoth"}); };
-      const code = tryScale(1) || tryScale(0.5) || tryScale(1.5);
-      if (code?.data) { onScan(code.data); }
-      else { setMsg("No se encontró QR. Intenta de nuevo."); if (inputRef.current) inputRef.current.value = ""; }
-    };
-    img.src = url;
-  };
-
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 300, display: "flex", flexDirection: "column" }}>
-      <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
-
       {/* Header */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "linear-gradient(to bottom,rgba(0,0,0,.7),transparent)" }}>
-        <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Escanear QR</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", fontSize: 28, cursor: "pointer" }}>✕</button>
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, zIndex: 10,
+        padding: "48px 20px 16px",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        background: "linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)"
+      }}>
+        <div style={{ color: "#fff", fontWeight: 700, fontSize: 17 }}>Escanear código</div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", fontSize: 28, cursor: "pointer", padding: 4 }}>✕</button>
       </div>
 
-      {/* Video container — video element injected here via DOM */}
-      <div ref={containerRef} style={{ flex: 1, position: "relative", overflow: "hidden" }} />
+      {/* Video */}
+      <video
+        ref={videoRef}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        muted
+        playsInline
+        autoPlay
+      />
 
-      {/* Viewfinder overlay */}
-      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-        <div style={{ width: 240, height: 240, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />
-      </div>
+      {/* Viewfinder */}
+      {status === "scanning" && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          <div style={{
+            width: 250, height: 250,
+            border: "3px solid #60a5fa",
+            borderRadius: 16,
+            boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)"
+          }} />
+        </div>
+      )}
 
-      {/* Bottom area */}
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px", background: "linear-gradient(to top,rgba(0,0,0,.8),transparent)", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-        {msg && <div style={{ color: failed ? "#f87171" : "#94a3b8", fontSize: 13, textAlign: "center" }}>{msg}</div>}
-        <div style={{ color: "#60a5fa", fontSize: 12 }}>Apunta al QR de la etiqueta</div>
-        {/* Fallback button */}
-        <button onClick={() => inputRef.current?.click()}
-          style={{ padding: "10px 20px", borderRadius: 8, border: "1.5px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.1)", color: "#fff", fontSize: 13, cursor: "pointer" }}>
-          📁 Usar foto de galería
-        </button>
-      </div>
+      {/* Loading */}
+      {status === "loading" && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+          <div style={{ color: "#94a3b8", fontSize: 15 }}>Iniciando cámara…</div>
+        </div>
+      )}
+
+      {/* Error */}
+      {status === "error" && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, padding: "0 32px" }}>
+          <div style={{ fontSize: 40 }}>📷</div>
+          <div style={{ color: "#f87171", fontSize: 14, textAlign: "center" }}>{errorMsg}</div>
+          <div style={{ color: "#64748b", fontSize: 12, textAlign: "center" }}>
+            Asegúrate de haber instalado la app y aceptado los permisos de cámara.
+          </div>
+          <button onClick={onClose}
+            style={{ padding: "12px 24px", borderRadius: 10, border: "1.5px solid #334155", background: "none", color: "#60a5fa", fontSize: 14, cursor: "pointer" }}>
+            Cerrar y usar código manual
+          </button>
+        </div>
+      )}
+
+      {/* Bottom hint */}
+      {status === "scanning" && (
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          padding: "16px 20px 40px",
+          background: "linear-gradient(to top, rgba(0,0,0,0.8), transparent)",
+          textAlign: "center", color: "#60a5fa", fontSize: 13
+        }}>
+          Apunta al código QR de la etiqueta
+        </div>
+      )}
     </div>
   );
 }
@@ -204,14 +200,69 @@ function PinModal({ onConfirm, onClose, pin }) {
   );
 }
 
+// ── Install PWA Banner ────────────────────────────────────────────────────────
+function InstallBanner() {
+  const [show, setShow] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const deferredRef = useRef(null);
+
+  useEffect(() => {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
+    setIsIOS(ios);
+    if (!standalone) {
+      if (ios) {
+        setShow(true);
+      } else {
+        window.addEventListener("beforeinstallprompt", (e) => {
+          e.preventDefault();
+          deferredRef.current = e;
+          setShow(true);
+        });
+      }
+    }
+  }, []);
+
+  if (!show) return null;
+
+  const install = () => {
+    if (deferredRef.current) {
+      deferredRef.current.prompt();
+      deferredRef.current.userChoice.then(() => setShow(false));
+    }
+  };
+
+  return (
+    <div style={{ background: "#1e3a5f", border: "1px solid #3b82f6", borderRadius: 10, padding: "12px 14px", margin: "0 0 12px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ color: "#f8fafc", fontWeight: 600, fontSize: 13 }}>📲 Instala la app para usar la cámara</div>
+        {isIOS ? (
+          <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 3 }}>
+            Toca <b style={{ color: "#60a5fa" }}>Compartir</b> → <b style={{ color: "#60a5fa" }}>Agregar a pantalla de inicio</b>
+          </div>
+        ) : (
+          <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 3 }}>Instala para mejor experiencia con cámara</div>
+        )}
+      </div>
+      {!isIOS && (
+        <button onClick={install}
+          style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 600, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+          Instalar
+        </button>
+      )}
+      <button onClick={() => setShow(false)} style={{ background: "none", border: "none", color: "#64748b", fontSize: 18, cursor: "pointer", padding: 2 }}>✕</button>
+    </div>
+  );
+}
+
 // ── Main Driver View ──────────────────────────────────────────────────────────
 export default function DriverView() {
   const [deliveries, setDeliveries] = useState({});
   const [config, setConfig] = useState({});
   const [manualCode, setManualCode] = useState("");
   const [showScanner, setShowScanner] = useState(false);
-  const [showPin, setShowPin] = useState(null); // code to deliver
-  const [tracking, setTracking] = useState({}); // { code: true }
+  const [showPin, setShowPin] = useState(null);
+  const [tracking, setTracking] = useState({});
   const [error, setError] = useState("");
   const watchIds = useRef({});
 
@@ -221,7 +272,6 @@ export default function DriverView() {
     return () => { u1(); u2(); };
   }, []);
 
-  // My linked deliveries
   const myDeliveries = Object.values(deliveries).filter(d =>
     d.status === "linked" || d.status === "in_transit" || d.status === "delivered"
   );
@@ -244,7 +294,6 @@ export default function DriverView() {
   const startTransit = (code) => {
     const d = deliveries[code];
     if (!d) return;
-    // Start GPS
     if (!navigator.geolocation) { alert("GPS no disponible."); return; }
     const wid = navigator.geolocation.watchPosition(
       (pos) => {
@@ -290,7 +339,6 @@ export default function DriverView() {
       {showScanner && <QRScanner onScan={linkDelivery} onClose={() => setShowScanner(false)} />}
       {showPin && <PinModal pin={pin} onConfirm={() => confirmDelivery(showPin)} onClose={() => setShowPin(null)} />}
 
-      {/* Header */}
       <div style={{ background: "#0f172a", padding: "20px 20px 16px", borderBottom: "2px solid #1e40af" }}>
         <div style={{ color: "#60a5fa", fontSize: 11, fontFamily: "monospace", letterSpacing: 2, marginBottom: 4 }}>PANEL DEL CONDUCTOR</div>
         <div style={{ color: "#f8fafc", fontSize: 22, fontWeight: 700 }}>Mis Entregas</div>
@@ -298,7 +346,8 @@ export default function DriverView() {
 
       <div style={{ padding: "16px 16px 0", display: "flex", flexDirection: "column", gap: 12 }}>
 
-        {/* Agregar pedido */}
+        <InstallBanner />
+
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 16 }}>
           <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 10 }}>AGREGAR PEDIDO</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -316,7 +365,6 @@ export default function DriverView() {
           {error && <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</div>}
         </div>
 
-        {/* Lista activa */}
         {activeDeliveries.length === 0 && (
           <div style={{ background: "#1e293b", borderRadius: 12, padding: 20, textAlign: "center", color: "#475569" }}>
             No tienes pedidos asignados todavía.
@@ -324,16 +372,13 @@ export default function DriverView() {
         )}
 
         {activeDeliveries.map(d => (
-          <DriverDeliveryCard
-            key={d.code}
-            delivery={d}
+          <DriverDeliveryCard key={d.code} delivery={d}
             isTracking={!!tracking[d.code]}
             onStartTransit={() => startTransit(d.code)}
             onDeliver={() => setShowPin(d.code)}
           />
         ))}
 
-        {/* Entregados */}
         {doneDeliveries.length > 0 && (
           <div>
             <div style={{ color: "#475569", fontSize: 11, fontFamily: "monospace", marginBottom: 8 }}>COMPLETADOS</div>
@@ -360,7 +405,6 @@ function DriverDeliveryCard({ delivery, isTracking, onStartTransit, onDeliver })
 
   return (
     <div style={{ background: "#1e293b", borderRadius: 12, overflow: "hidden", border: `1.5px solid ${s.color}30` }}>
-      {/* Info */}
       <div style={{ padding: "14px 14px 10px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <div style={{ fontFamily: "monospace", fontWeight: 900, fontSize: 20, color: "#f8fafc", letterSpacing: 3 }}>{code}</div>
@@ -369,22 +413,18 @@ function DriverDeliveryCard({ delivery, isTracking, onStartTransit, onDeliver })
             <span style={{ color: s.color, fontSize: 12, fontWeight: 600 }}>{s.label}</span>
           </div>
         </div>
-        {to.name && <div style={{ color: "#f8fafc", fontWeight: 600, fontSize: 14 }}>{to.name}</div>}
+        {to.name    && <div style={{ color: "#f8fafc", fontWeight: 600, fontSize: 14 }}>{to.name}</div>}
         {to.address && <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>{to.address}</div>}
         {to.city    && <div style={{ color: "#94a3b8", fontSize: 12 }}>{to.city}</div>}
         {to.phone   && <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>✆ {to.phone}</div>}
         {to.note    && <div style={{ color: "#f59e0b", fontSize: 12, marginTop: 6 }}>📌 {to.note}</div>}
       </div>
-
-      {/* Mapa */}
       {currentPos && isTracking && (
         <div style={{ padding: "0 14px 10px" }}>
           <LiveMap lat={currentPos.lat} lng={currentPos.lng} trail={trail || []} />
           <div style={{ color: "#475569", fontSize: 11, marginTop: 4 }}>GPS activo · {lastUpdate}</div>
         </div>
       )}
-
-      {/* Botones */}
       <div style={{ display: "flex", borderTop: "1px solid #334155" }}>
         {status === "linked" && (
           <button onClick={onStartTransit}

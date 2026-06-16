@@ -190,10 +190,10 @@ function DeliveryModal({ onConfirm, onClose, pin }) {
     setUploading(true);
     setError("");
 
-    // Upload photo to Bluehosting
+    // Upload photo via Vercel proxy to Bluehosting
     let photoUrl = null;
     try {
-      const resp = await fetch("https://robustheit.cl/upload.php", {
+      const resp = await fetch("/api/upload-photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: photo, code: Date.now().toString() }),

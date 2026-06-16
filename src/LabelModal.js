@@ -6,6 +6,7 @@ import printLabel from "./printLabel";
 export default function LabelModal({ delivery, onSave, onClose }) {
   const [companyName, setCompanyName] = useState("");
   const [to, setTo] = useState({ name: "", address: "", city: "", phone: "", email: "", note: "" });
+  const [orderNumber, setOrderNumber] = useState("");
 
   // Cargar nombre de empresa guardado
   useEffect(() => {
@@ -18,6 +19,7 @@ export default function LabelModal({ delivery, onSave, onClose }) {
   // Pre-llenar si ya tiene datos
   useEffect(() => {
     if (delivery.label?.to) setTo(delivery.label.to);
+    if (delivery.label?.orderNumber) setOrderNumber(delivery.label.orderNumber);
   }, [delivery]);
 
   const setF = (field, val) => setTo(t => ({ ...t, [field]: val }));
@@ -25,7 +27,7 @@ export default function LabelModal({ delivery, onSave, onClose }) {
   const handleSave = async (andPrint = false) => {
     // Guardar nombre empresa en config global
     await saveConfig({ companyName });
-    const labelData = { from: { name: companyName }, to };
+    const labelData = { from: { name: companyName }, to, orderNumber };
     onSave(labelData);
     if (andPrint) setTimeout(() => printLabel({ ...delivery, label: labelData }), 80);
   };
@@ -59,6 +61,13 @@ export default function LabelModal({ delivery, onSave, onClose }) {
           <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Onloop SpA"
             style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #334155", background: "#1e293b", color: "#f8fafc", fontSize: 13, outline: "none", marginBottom: 4 }} />
           <div style={{ color: "#475569", fontSize: 11 }}>Se guarda automáticamente para los próximos pedidos</div>
+        </div>
+
+        {/* Número de pedido */}
+        <div style={{ background: "#0f172a", borderRadius: 10, padding: "14px 14px 10px", marginBottom: 12 }}>
+          <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 8 }}>🔢 NÚMERO DE PEDIDO</div>
+          <input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} placeholder="Ej: 00123"
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #334155", background: "#1e293b", color: "#f8fafc", fontSize: 13, outline: "none" }} />
         </div>
 
         {/* Destinatario */}

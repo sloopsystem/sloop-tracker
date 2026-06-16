@@ -5,6 +5,7 @@ export default function printLabel(delivery) {
   const { code, label = {}, createdAt, createdDate } = delivery;
   const from = label.from || {};
   const to   = label.to   || {};
+  const orderNumber = label.orderNumber || "";
 
   const html = `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"/>
@@ -60,7 +61,7 @@ body{font-family:Arial,sans-serif;background:#fff;}
   </div>
   ${label.notes ? `<div class="notes"><div class="sec-lbl">Instrucciones</div><div class="notes-txt">${label.notes}</div></div>` : `<div style="flex:1"></div>`}
   <div class="foot">
-    <span class="foot-id">ID: ${code}</span>
+    <span class="foot-id">ID: ${code}${orderNumber ? ` · Pedido: #${orderNumber}` : ""}</span>
     <span class="foot-id">onloop.cl</span>
   </div>
 </div>

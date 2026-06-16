@@ -13,7 +13,7 @@ const STATUS = {
 
 const nowStr = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-// ── Load jsQR (works on iOS Safari) ──────────────────────────────────────────
+// ── Load jsQR for image processing ───────────────────────────────────────────
 function loadJsQR() {
   return new Promise((res) => {
     if (window.jsQR) return res();
@@ -24,102 +24,114 @@ function loadJsQR() {
   });
 }
 
-// ── QR Scanner — compatible with iOS Safari ───────────────────────────────────
+// ── QR Scanner — uses native camera via file input ────────────────────────────
 function QRScanner({ onScan, onClose }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const activeRef = useRef(true);
-  const [status, setStatus] = useState("ready"); // ready | scanning | error
+  const inputRef = useRef(null);
+  const [status, setStatus] = useState("ready"); // ready | processing | error | notfound
+  const [error, setError] = useState("");
 
-  const startCamera = async () => {
-    setStatus("scanning");
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStatus("processing");
     await loadJsQR();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } }
-      });
-      if (!activeRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
-      streamRef.current = stream;
-      const video = videoRef.current;
-      video.srcObject = stream;
-      video.onloadedmetadata = () => {
-        video.play().then(() => scan()).catch(() => setStatus("error"));
-      };
-    } catch (e) {
-      setStatus("error");
-    }
-  };
 
-  const scan = () => {
-    if (!activeRef.current || !videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
-    if (video.readyState < 2) { rafRef.current = requestAnimationFrame(scan); return; }
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = window.jsQR(imageData.data, imageData.width, imageData.height);
-    if (code && code.data) { onScan(code.data); return; }
-    rafRef.current = requestAnimationFrame(scan);
-  };
-
-  useEffect(() => {
-    return () => {
-      activeRef.current = false;
-      cancelAnimationFrame(rafRef.current);
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+      URL.revokeObjectURL(url);
+      if (code && code.data) {
+        onScan(code.data);
+      } else {
+        setStatus("notfound");
+        // Reset input so same file can be tried again
+        if (inputRef.current) inputRef.current.value = "";
+      }
     };
-  }, []);
+    img.onerror = () => { setStatus("error"); setError("No se pudo leer la imagen."); };
+    img.src = url;
+  };
+
+  const openCamera = () => {
+    if (inputRef.current) inputRef.current.click();
+  };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 300, display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#0f172a", zIndex: 300, display: "flex", flexDirection: "column" }}>
+      {/* Hidden file input — triggers native camera */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFile}
+        style={{ display: "none" }}
+      />
+
+      {/* Header */}
+      <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e293b" }}>
         <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 16 }}>Escanear QR</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 24, cursor: "pointer" }}>✕</button>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 28, cursor: "pointer" }}>✕</button>
       </div>
 
-      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20 }}>
-        <video ref={videoRef} playsInline muted style={{ width: "100%", maxWidth: 480, display: status === "scanning" ? "block" : "none" }} />
-        <canvas ref={canvasRef} style={{ display: "none" }} />
-
-        {status === "scanning" && (
-          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 220, height: 220, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.6)", pointerEvents: "none" }} />
-        )}
+      {/* Content */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 32px", gap: 20 }}>
 
         {status === "ready" && (
-          <div style={{ textAlign: "center", padding: "0 32px" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📷</div>
-            <button onClick={startCamera}
-              style={{ padding: "14px 32px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>
-              Activar cámara
-            </button>
-            <div style={{ color: "#475569", fontSize: 12, marginTop: 12 }}>
-              Permite el acceso a la cámara cuando iOS lo solicite
+          <>
+            <div style={{ fontSize: 64 }}>📷</div>
+            <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 18, textAlign: "center" }}>Escanear código QR</div>
+            <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>
+              Abre la cámara, apunta al QR de la etiqueta y toma la foto
             </div>
-          </div>
+            <button onClick={openCamera}
+              style={{ width: "100%", padding: "16px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>
+              📷 Abrir cámara
+            </button>
+          </>
+        )}
+
+        {status === "processing" && (
+          <>
+            <div style={{ fontSize: 48 }}>⏳</div>
+            <div style={{ color: "#94a3b8", fontSize: 15 }}>Procesando imagen…</div>
+          </>
+        )}
+
+        {status === "notfound" && (
+          <>
+            <div style={{ fontSize: 48 }}>🔍</div>
+            <div style={{ color: "#f59e0b", fontWeight: 600, fontSize: 15, textAlign: "center" }}>
+              No se encontró un código QR en la foto
+            </div>
+            <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>
+              Intenta de nuevo — asegúrate que el QR esté bien iluminado y centrado
+            </div>
+            <button onClick={openCamera}
+              style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
+              📷 Intentar de nuevo
+            </button>
+          </>
         )}
 
         {status === "error" && (
-          <div style={{ textAlign: "center", padding: "0 24px" }}>
-            <div style={{ color: "#f87171", fontSize: 14, marginBottom: 8 }}>No se pudo acceder a la cámara.</div>
-            <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 16 }}>Cierra y usa el código manual.</div>
-            <button onClick={startCamera}
-              style={{ padding: "10px 24px", borderRadius: 8, border: "1.5px solid #334155", background: "none", color: "#60a5fa", fontSize: 13, cursor: "pointer" }}>
+          <>
+            <div style={{ fontSize: 48 }}>❌</div>
+            <div style={{ color: "#f87171", fontSize: 14, textAlign: "center" }}>{error}</div>
+            <button onClick={() => { setStatus("ready"); setError(""); }}
+              style={{ padding: "12px 28px", borderRadius: 10, border: "1.5px solid #334155", background: "none", color: "#60a5fa", fontSize: 14, cursor: "pointer" }}>
               Reintentar
             </button>
-          </div>
+          </>
         )}
       </div>
-
-      {status === "scanning" && (
-        <div style={{ padding: "16px 20px", textAlign: "center", color: "#60a5fa", fontSize: 13 }}>
-          Apunta al código QR de la etiqueta
-        </div>
-      )}
     </div>
   );
 }

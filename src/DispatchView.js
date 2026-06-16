@@ -47,6 +47,7 @@ export default function DispatchView() {
   };
 
   const saveLabel = (labelData) => {
+  console.log("Email:", labelData.to?.email);
     const updated = { ...delivery, label: labelData };
     saveDelivery(updated);
     // Enviar email de confirmación al destinatario si tiene email

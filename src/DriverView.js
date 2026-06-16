@@ -18,7 +18,7 @@ function loadJsQR() {
   return new Promise((res) => {
     if (window.jsQR) return res();
     const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
+s.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
     s.onload = res;
     document.head.appendChild(s);
   });

@@ -95,7 +95,7 @@ function QRScanner({ onScan, onClose }) {
 
       {/* Video — always in DOM so iOS can use it */}
       <video ref={videoRef} playsInline muted autoPlay
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: status === "scanning" ? "block" : "none" }} />
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: status === "scanning" ? 1 : 0 }} />
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
       {/* Viewfinder */}

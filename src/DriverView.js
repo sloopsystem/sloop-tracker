@@ -150,39 +150,155 @@ function QRScanner({ onScan, onClose }) {
   );
 }
 
-// ── PIN Modal ─────────────────────────────────────────────────────────────────
-function PinModal({ onConfirm, onClose, pin }) {
-  const [input, setInput] = useState("");
+// ── Delivery Confirmation Modal ───────────────────────────────────────────────
+function DeliveryModal({ onConfirm, onClose, pin }) {
+  const [step, setStep] = useState("data"); // data | photo | pin
+  const [receiverName, setReceiverName] = useState("");
+  const [receiverRut, setReceiverRut] = useState("");
+  const [photo, setPhoto] = useState(null); // base64
+  const [photoFile, setPhotoFile] = useState(null);
+  const [pinInput, setPinInput] = useState("");
   const [error, setError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
 
-  const check = () => {
-    if (input === pin) { onConfirm(); }
-    else { setError("PIN incorrecto"); setInput(""); }
+  const formatRut = (val) => {
+    val = val.replace(/[^0-9kK]/g, "").toUpperCase();
+    if (val.length > 1) val = val.slice(0, -1) + "-" + val.slice(-1);
+    return val;
+  };
+
+  const handlePhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setPhoto(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const goToPin = () => {
+    if (!receiverName.trim()) { setError("Ingresa el nombre de quien recibe."); return; }
+    if (!receiverRut.trim() || receiverRut.length < 5) { setError("Ingresa un RUT válido."); return; }
+    if (!photo) { setError("Debes tomar una foto de la entrega."); return; }
+    setError("");
+    setStep("pin");
+  };
+
+  const confirm = async () => {
+    if (pinInput !== pin) { setError("PIN incorrecto."); setPinInput(""); return; }
+    setUploading(true);
+    setError("");
+
+    // Upload photo to Bluehosting
+    let photoUrl = null;
+    try {
+      const resp = await fetch("https://robustheit.cl/upload.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: photo, code: Date.now().toString() }),
+      });
+      const data = await resp.json();
+      if (data.url) photoUrl = data.url;
+    } catch (e) {
+      console.error("Error subiendo foto:", e);
+    }
+
+    setUploading(false);
+    onConfirm({ receiverName, receiverRut, photoUrl });
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#1e293b", borderRadius: 16, padding: 28, width: "100%", maxWidth: 320, textAlign: "center" }}>
-        <div style={{ fontSize: 36, marginBottom: 12 }}>🔐</div>
-        <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Confirmar entrega</div>
-        <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 20 }}>Ingresa el PIN para marcar como entregado</div>
-        <input
-          type="password" value={input} onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && check()}
-          placeholder="PIN"
-          style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1.5px solid #334155", background: "#0f172a", color: "#f8fafc", fontSize: 20, textAlign: "center", outline: "none", letterSpacing: 6, marginBottom: 8 }}
-        />
-        {error && <div style={{ color: "#f87171", fontSize: 12, marginBottom: 8 }}>{error}</div>}
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose}
-            style={{ flex: 1, padding: 12, borderRadius: 8, border: "1.5px solid #334155", background: "none", color: "#94a3b8", fontWeight: 600, cursor: "pointer" }}>
-            Cancelar
-          </button>
-          <button onClick={check}
-            style={{ flex: 1, padding: 12, borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontWeight: 700, cursor: "pointer" }}>
-            Confirmar
-          </button>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: "#1e293b", borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", padding: "24px 20px 36px" }}>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div>
+            <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", letterSpacing: 2 }}>CONFIRMAR ENTREGA</div>
+            <div style={{ color: "#f8fafc", fontSize: 18, fontWeight: 700 }}>
+              {step === "data" ? "Datos del receptor" : step === "photo" ? "Foto de entrega" : "PIN de confirmación"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", fontSize: 24, cursor: "pointer" }}>✕</button>
         </div>
+
+        {/* Step 1: Data */}
+        {step === "data" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>Nombre de quien recibe *</div>
+              <input value={receiverName} onChange={e => setReceiverName(e.target.value)}
+                placeholder="Juan Pérez"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #334155", background: "#0f172a", color: "#f8fafc", fontSize: 14, outline: "none" }} />
+            </div>
+            <div>
+              <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>RUT *</div>
+              <input value={receiverRut} onChange={e => setReceiverRut(formatRut(e.target.value))}
+                placeholder="12.345.678-9"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #334155", background: "#0f172a", color: "#f8fafc", fontSize: 14, outline: "none" }} />
+            </div>
+
+            {/* Photo */}
+            <div>
+              <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>Foto de la entrega *</div>
+              <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+              {!photo ? (
+                <button onClick={() => inputRef.current?.click()}
+                  style={{ width: "100%", padding: "14px", borderRadius: 8, border: "1.5px dashed #334155", background: "none", color: "#60a5fa", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+                  📷 Tomar foto de la entrega
+                </button>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <img src={photo} alt="entrega" style={{ width: "100%", borderRadius: 8, maxHeight: 200, objectFit: "cover" }} />
+                  <button onClick={() => { setPhoto(null); setPhotoFile(null); }}
+                    style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,.6)", border: "none", color: "#fff", borderRadius: "50%", width: 30, height: 30, cursor: "pointer", fontSize: 14 }}>
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {error && <div style={{ color: "#f87171", fontSize: 12 }}>{error}</div>}
+
+            <button onClick={goToPin}
+              style={{ width: "100%", padding: 14, borderRadius: 10, border: "none", background: "#10b981", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", marginTop: 4 }}>
+              Continuar →
+            </button>
+          </div>
+        )}
+
+        {/* Step 2: PIN */}
+        {step === "pin" && (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🔐</div>
+            <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 20 }}>Ingresa el PIN para confirmar la entrega</div>
+
+            {/* Summary */}
+            <div style={{ background: "#0f172a", borderRadius: 8, padding: "10px 14px", marginBottom: 16, textAlign: "left" }}>
+              <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 6 }}>RECEPTOR</div>
+              <div style={{ color: "#f8fafc", fontWeight: 600 }}>{receiverName}</div>
+              <div style={{ color: "#64748b", fontSize: 12 }}>{receiverRut}</div>
+            </div>
+
+            <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && confirm()}
+              placeholder="PIN"
+              style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1.5px solid #334155", background: "#0f172a", color: "#f8fafc", fontSize: 20, textAlign: "center", outline: "none", letterSpacing: 6, marginBottom: 8 }}
+            />
+            {error && <div style={{ color: "#f87171", fontSize: 12, marginBottom: 8 }}>{error}</div>}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setStep("data"); setError(""); setPinInput(""); }}
+                style={{ flex: 1, padding: 12, borderRadius: 8, border: "1.5px solid #334155", background: "none", color: "#94a3b8", fontWeight: 600, cursor: "pointer" }}>
+                ← Volver
+              </button>
+              <button onClick={confirm} disabled={uploading}
+                style={{ flex: 1, padding: 12, borderRadius: 8, border: "none", background: uploading ? "#334155" : "#10b981", color: "#fff", fontWeight: 700, cursor: "pointer" }}>
+                {uploading ? "Subiendo…" : "✅ Confirmar"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -308,14 +424,19 @@ export default function DriverView() {
     }
   };
 
-  const confirmDelivery = (code) => {
+  const confirmDelivery = (code, receiverData) => {
     if (watchIds.current[code]) {
       navigator.geolocation.clearWatch(watchIds.current[code]);
       delete watchIds.current[code];
     }
     setTracking(t => { const n = { ...t }; delete n[code]; return n; });
     const d = deliveries[code];
-    const updated = { ...d, status: "delivered", deliveredAt: nowStr() };
+    const updated = { 
+      ...d, 
+      status: "delivered", 
+      deliveredAt: nowStr(),
+      receiver: receiverData,
+    };
     saveDelivery(updated);
     // Email al cliente
     if (d.label?.to?.email) {
@@ -333,7 +454,7 @@ export default function DriverView() {
   return (
     <div style={{ padding: "0 0 40px" }}>
       {showScanner && <QRScanner onScan={linkDelivery} onClose={() => setShowScanner(false)} />}
-      {showPin && <PinModal pin={pin} onConfirm={() => confirmDelivery(showPin)} onClose={() => setShowPin(null)} />}
+      {showPin && <DeliveryModal pin={pin} onConfirm={(data) => confirmDelivery(showPin, data)} onClose={() => setShowPin(null)} />}
 
       <div style={{ background: "#0f172a", padding: "20px 20px 16px", borderBottom: "2px solid #1e40af" }}>
         <div style={{ color: "#60a5fa", fontSize: 11, fontFamily: "monospace", letterSpacing: 2, marginBottom: 4 }}>PANEL DEL CONDUCTOR</div>

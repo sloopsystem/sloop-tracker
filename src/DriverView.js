@@ -13,148 +13,135 @@ const STATUS = {
 
 const nowStr = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-// ── Load ZXing (best cross-platform QR/barcode scanner) ───────────────────────
-function loadZXing() {
-  return new Promise((res, rej) => {
-    if (window.ZXing) return res();
+// ── Load jsQR ─────────────────────────────────────────────────────────────────
+function loadJsQR() {
+  return new Promise((res) => {
+    if (window.jsQR) return res();
     const s = document.createElement("script");
-    s.src = "https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js";
-    s.onload = () => res();
-    s.onerror = rej;
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
+    s.onload = res;
     document.head.appendChild(s);
   });
 }
 
-// ── QR Scanner using ZXing ────────────────────────────────────────────────────
+// ── QR Scanner ────────────────────────────────────────────────────────────────
 function QRScanner({ onScan, onClose }) {
   const videoRef = useRef(null);
-  const readerRef = useRef(null);
-  const [status, setStatus] = useState("loading"); // loading | scanning | error
-  const [errorMsg, setErrorMsg] = useState("");
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const rafRef = useRef(null);
+  const activeRef = useRef(true);
+  const [status, setStatus] = useState("ready"); // ready | scanning | error
+
+  // This runs ONLY when user taps the button — required for iOS permission
+  const activateCamera = async () => {
+    setStatus("scanning");
+    try {
+      await loadJsQR();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } }
+      });
+      if (!activeRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
+      streamRef.current = stream;
+
+      const video = videoRef.current;
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        video.play().then(() => tick()).catch(() => setStatus("error"));
+      };
+    } catch (e) {
+      setStatus("error");
+    }
+  };
+
+  const tick = () => {
+    if (!activeRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState < 2) {
+      rafRef.current = requestAnimationFrame(tick);
+      return;
+    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
+    if (code && code.data) {
+      activeRef.current = false;
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      onScan(code.data);
+      return;
+    }
+    rafRef.current = requestAnimationFrame(tick);
+  };
 
   useEffect(() => {
-    let reader;
-    let stopped = false;
-
-    const start = async () => {
-      try {
-        await loadZXing();
-        if (stopped) return;
-
-        reader = new window.ZXing.BrowserMultiFormatReader();
-        readerRef.current = reader;
-
-        // Get available cameras
-        const devices = await window.ZXing.BrowserCodeReader.listVideoInputDevices();
-        if (stopped) return;
-
-        // Prefer back camera
-        const back = devices.find(d =>
-          d.label.toLowerCase().includes("back") ||
-          d.label.toLowerCase().includes("rear") ||
-          d.label.toLowerCase().includes("environment") ||
-          d.label.toLowerCase().includes("trasera")
-        );
-        const deviceId = back ? back.deviceId : (devices[0]?.deviceId);
-
-        if (!deviceId) {
-          setErrorMsg("No se encontró cámara disponible.");
-          setStatus("error");
-          return;
-        }
-
-        setStatus("scanning");
-
-        await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result, err) => {
-          if (result && !stopped) {
-            stopped = true;
-            reader.reset();
-            onScan(result.getText());
-          }
-        });
-
-      } catch (err) {
-        if (!stopped) {
-          setErrorMsg("No se pudo acceder a la cámara. Verifica los permisos.");
-          setStatus("error");
-        }
-      }
-    };
-
-    start();
-
     return () => {
-      stopped = true;
-      if (readerRef.current) {
-        try { readerRef.current.reset(); } catch (_) {}
-      }
+      activeRef.current = false;
+      cancelAnimationFrame(rafRef.current);
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 300, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 300 }}>
       {/* Header */}
-      <div style={{
-        position: "absolute", top: 0, left: 0, right: 0, zIndex: 10,
-        padding: "48px 20px 16px",
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        background: "linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)"
-      }}>
-        <div style={{ color: "#fff", fontWeight: 700, fontSize: 17 }}>Escanear código</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", fontSize: 28, cursor: "pointer", padding: 4 }}>✕</button>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "48px 20px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "linear-gradient(to bottom,rgba(0,0,0,.8),transparent)" }}>
+        <div style={{ color: "#fff", fontWeight: 700, fontSize: 17 }}>Escanear QR</div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", fontSize: 28, cursor: "pointer" }}>✕</button>
       </div>
 
-      {/* Video */}
-      <video
-        ref={videoRef}
-        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        muted
-        playsInline
-        autoPlay
-      />
+      {/* Video — always in DOM so iOS can use it */}
+      <video ref={videoRef} playsInline muted autoPlay
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: status === "scanning" ? "block" : "none" }} />
+      <canvas ref={canvasRef} style={{ display: "none" }} />
 
       {/* Viewfinder */}
       {status === "scanning" && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-          <div style={{
-            width: 250, height: 250,
-            border: "3px solid #60a5fa",
-            borderRadius: 16,
-            boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)"
-          }} />
+          <div style={{ width: 250, height: 250, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)" }} />
         </div>
       )}
 
-      {/* Loading */}
-      {status === "loading" && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
-          <div style={{ color: "#94a3b8", fontSize: 15 }}>Iniciando cámara…</div>
-        </div>
-      )}
-
-      {/* Error */}
-      {status === "error" && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, padding: "0 32px" }}>
-          <div style={{ fontSize: 40 }}>📷</div>
-          <div style={{ color: "#f87171", fontSize: 14, textAlign: "center" }}>{errorMsg}</div>
-          <div style={{ color: "#64748b", fontSize: 12, textAlign: "center" }}>
-            Asegúrate de haber instalado la app y aceptado los permisos de cámara.
+      {/* Ready state — button triggers getUserMedia directly */}
+      {status === "ready" && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: "0 40px" }}>
+          <div style={{ fontSize: 56 }}>📷</div>
+          <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 18, textAlign: "center" }}>Escanear código QR</div>
+          <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>
+            Presiona el botón para activar la cámara y apunta al QR de la etiqueta
           </div>
+          <button onClick={activateCamera}
+            style={{ width: "100%", padding: "16px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>
+            Activar cámara
+          </button>
+        </div>
+      )}
+
+      {/* Error state */}
+      {status === "error" && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "0 32px" }}>
+          <div style={{ fontSize: 40 }}>⚠️</div>
+          <div style={{ color: "#f87171", fontSize: 14, textAlign: "center" }}>No se pudo acceder a la cámara.</div>
+          <div style={{ color: "#64748b", fontSize: 12, textAlign: "center" }}>
+            Ve a Configuración → Safari → Cámara → Permitir
+          </div>
+          <button onClick={activateCamera}
+            style={{ padding: "12px 24px", borderRadius: 10, border: "1.5px solid #3b82f6", background: "none", color: "#60a5fa", fontSize: 14, cursor: "pointer" }}>
+            Reintentar
+          </button>
           <button onClick={onClose}
-            style={{ padding: "12px 24px", borderRadius: 10, border: "1.5px solid #334155", background: "none", color: "#60a5fa", fontSize: 14, cursor: "pointer" }}>
-            Cerrar y usar código manual
+            style={{ padding: "10px 24px", borderRadius: 10, border: "1.5px solid #334155", background: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer" }}>
+            Usar código manual
           </button>
         </div>
       )}
 
       {/* Bottom hint */}
       {status === "scanning" && (
-        <div style={{
-          position: "absolute", bottom: 0, left: 0, right: 0,
-          padding: "16px 20px 40px",
-          background: "linear-gradient(to top, rgba(0,0,0,0.8), transparent)",
-          textAlign: "center", color: "#60a5fa", fontSize: 13
-        }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "16px 20px 40px", background: "linear-gradient(to top,rgba(0,0,0,.8),transparent)", textAlign: "center", color: "#60a5fa", fontSize: 13 }}>
           Apunta al código QR de la etiqueta
         </div>
       )}

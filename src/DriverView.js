@@ -36,25 +36,44 @@ function QRScanner({ onScan, onClose }) {
     setStatus("processing");
     await loadJsQR();
 
-    const img = new Image();
     const url = URL.createObjectURL(file);
+    const img = new Image();
+
     img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
       URL.revokeObjectURL(url);
+      const MAX = 1024;
+      let w = img.width;
+      let h = img.height;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const tryDecode = (scale) => {
+        const sw = Math.round(w * scale);
+        const sh = Math.round(h * scale);
+        const c2 = document.createElement("canvas");
+        c2.width = sw; c2.height = sh;
+        c2.getContext("2d").drawImage(canvas, 0, 0, sw, sh);
+        const id = c2.getContext("2d").getImageData(0, 0, sw, sh);
+        return window.jsQR(id.data, id.width, id.height, { inversionAttempts: "attemptBoth" });
+      };
+
+      const code = tryDecode(1) || tryDecode(0.75) || tryDecode(0.5) || tryDecode(1.5);
+
       if (code && code.data) {
         onScan(code.data);
       } else {
         setStatus("notfound");
-        // Reset input so same file can be tried again
         if (inputRef.current) inputRef.current.value = "";
       }
     };
+
     img.onerror = () => { setStatus("error"); setError("No se pudo leer la imagen."); };
     img.src = url;
   };

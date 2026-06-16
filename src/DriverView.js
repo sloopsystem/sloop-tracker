@@ -13,7 +13,7 @@ const STATUS = {
 
 const nowStr = () => new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-// ── Load jsQR for image processing ───────────────────────────────────────────
+// ── Load jsQR ─────────────────────────────────────────────────────────────────
 function loadJsQR() {
   return new Promise((res) => {
     if (window.jsQR) return res();
@@ -24,132 +24,143 @@ function loadJsQR() {
   });
 }
 
-// ── QR Scanner — uses native camera via file input ────────────────────────────
+// ── QR Scanner ────────────────────────────────────────────────────────────────
 function QRScanner({ onScan, onClose }) {
-  const inputRef = useRef(null);
-  const [status, setStatus] = useState("ready"); // ready | processing | error | notfound
-  const [error, setError] = useState("");
+  const containerRef = useRef(null);
+  const stateRef = useRef({ active: true, stream: null, raf: null });
+  const [msg, setMsg] = useState("Iniciando cámara…");
+  const [failed, setFailed] = useState(false);
 
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setStatus("processing");
-    await loadJsQR();
+  useEffect(() => {
+    let video;
+    let canvas;
 
-    const url = URL.createObjectURL(file);
-    const img = new Image();
+    const start = async () => {
+      await loadJsQR();
+      if (!stateRef.current.active) return;
 
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const MAX = 1024;
-      let w = img.width;
-      let h = img.height;
-      if (w > MAX || h > MAX) {
-        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-        else       { w = Math.round(w * MAX / h); h = MAX; }
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        if (!stateRef.current.active) { stream.getTracks().forEach(t => t.stop()); return; }
+        stateRef.current.stream = stream;
 
-      const tryDecode = (scale) => {
-        const sw = Math.round(w * scale);
-        const sh = Math.round(h * scale);
-        const c2 = document.createElement("canvas");
-        c2.width = sw; c2.height = sh;
-        c2.getContext("2d").drawImage(canvas, 0, 0, sw, sh);
-        const id = c2.getContext("2d").getImageData(0, 0, sw, sh);
-        return window.jsQR(id.data, id.width, id.height, { inversionAttempts: "attemptBoth" });
-      };
+        // Create video directly in DOM — bypass React for srcObject
+        video = document.createElement("video");
+        video.setAttribute("playsinline", "true");
+        video.setAttribute("muted", "true");
+        video.autoplay = true;
+        video.muted = true;
+        video.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+        video.srcObject = stream;
 
-      const code = tryDecode(1) || tryDecode(0.75) || tryDecode(0.5) || tryDecode(1.5);
+        canvas = document.createElement("canvas");
+        canvas.style.display = "none";
 
-      if (code && code.data) {
-        onScan(code.data);
-      } else {
-        setStatus("notfound");
-        if (inputRef.current) inputRef.current.value = "";
+        if (containerRef.current) {
+          containerRef.current.appendChild(video);
+          containerRef.current.appendChild(canvas);
+        }
+
+        video.onloadedmetadata = () => {
+          video.play().then(() => {
+            setMsg("");
+            scan();
+          }).catch(() => setFailed(true));
+        };
+
+        video.onerror = () => setFailed(true);
+
+      } catch (err) {
+        setFailed(true);
+        setMsg("No se pudo acceder a la cámara.");
       }
     };
 
-    img.onerror = () => { setStatus("error"); setError("No se pudo leer la imagen."); };
+    const scan = () => {
+      if (!stateRef.current.active || !video || !canvas) return;
+      if (video.readyState < 2) { stateRef.current.raf = requestAnimationFrame(scan); return; }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
+      if (code && code.data) {
+        cleanup();
+        onScan(code.data);
+        return;
+      }
+      stateRef.current.raf = requestAnimationFrame(scan);
+    };
+
+    const cleanup = () => {
+      stateRef.current.active = false;
+      cancelAnimationFrame(stateRef.current.raf);
+      if (stateRef.current.stream) stateRef.current.stream.getTracks().forEach(t => t.stop());
+    };
+
+    start();
+    return () => {
+      cleanup();
+      // Remove video element from DOM
+      if (containerRef.current) containerRef.current.innerHTML = "";
+    };
+  }, []);
+
+  // File fallback
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMsg("Procesando…");
+    await loadJsQR();
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1024;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) { if (w > h) { h = Math.round(h*MAX/w); w = MAX; } else { w = Math.round(w*MAX/h); h = MAX; } }
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      const tryScale = (s) => { const sw=Math.round(w*s),sh=Math.round(h*s),c2=document.createElement("canvas"); c2.width=sw; c2.height=sh; c2.getContext("2d").drawImage(c,0,0,sw,sh); const id=c2.getContext("2d").getImageData(0,0,sw,sh); return window.jsQR(id.data,id.width,id.height,{inversionAttempts:"attemptBoth"}); };
+      const code = tryScale(1) || tryScale(0.5) || tryScale(1.5);
+      if (code?.data) { onScan(code.data); }
+      else { setMsg("No se encontró QR. Intenta de nuevo."); if (inputRef.current) inputRef.current.value = ""; }
+    };
     img.src = url;
   };
 
-  const openCamera = () => {
-    if (inputRef.current) inputRef.current.click();
-  };
-
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0f172a", zIndex: 300, display: "flex", flexDirection: "column" }}>
-      {/* Hidden file input — triggers native camera */}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleFile}
-        style={{ display: "none" }}
-      />
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 300, display: "flex", flexDirection: "column" }}>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
 
       {/* Header */}
-      <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e293b" }}>
-        <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 16 }}>Escanear QR</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 28, cursor: "pointer" }}>✕</button>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "linear-gradient(to bottom,rgba(0,0,0,.7),transparent)" }}>
+        <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Escanear QR</div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", fontSize: 28, cursor: "pointer" }}>✕</button>
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 32px", gap: 20 }}>
+      {/* Video container — video element injected here via DOM */}
+      <div ref={containerRef} style={{ flex: 1, position: "relative", overflow: "hidden" }} />
 
-        {status === "ready" && (
-          <>
-            <div style={{ fontSize: 64 }}>📷</div>
-            <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: 18, textAlign: "center" }}>Escanear código QR</div>
-            <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>
-              Abre la cámara, apunta al QR de la etiqueta y toma la foto
-            </div>
-            <button onClick={openCamera}
-              style={{ width: "100%", padding: "16px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>
-              📷 Abrir cámara
-            </button>
-          </>
-        )}
+      {/* Viewfinder overlay */}
+      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <div style={{ width: 240, height: 240, border: "3px solid #60a5fa", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />
+      </div>
 
-        {status === "processing" && (
-          <>
-            <div style={{ fontSize: 48 }}>⏳</div>
-            <div style={{ color: "#94a3b8", fontSize: 15 }}>Procesando imagen…</div>
-          </>
-        )}
-
-        {status === "notfound" && (
-          <>
-            <div style={{ fontSize: 48 }}>🔍</div>
-            <div style={{ color: "#f59e0b", fontWeight: 600, fontSize: 15, textAlign: "center" }}>
-              No se encontró un código QR en la foto
-            </div>
-            <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>
-              Intenta de nuevo — asegúrate que el QR esté bien iluminado y centrado
-            </div>
-            <button onClick={openCamera}
-              style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: "#3b82f6", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
-              📷 Intentar de nuevo
-            </button>
-          </>
-        )}
-
-        {status === "error" && (
-          <>
-            <div style={{ fontSize: 48 }}>❌</div>
-            <div style={{ color: "#f87171", fontSize: 14, textAlign: "center" }}>{error}</div>
-            <button onClick={() => { setStatus("ready"); setError(""); }}
-              style={{ padding: "12px 28px", borderRadius: 10, border: "1.5px solid #334155", background: "none", color: "#60a5fa", fontSize: 14, cursor: "pointer" }}>
-              Reintentar
-            </button>
-          </>
-        )}
+      {/* Bottom area */}
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px", background: "linear-gradient(to top,rgba(0,0,0,.8),transparent)", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+        {msg && <div style={{ color: failed ? "#f87171" : "#94a3b8", fontSize: 13, textAlign: "center" }}>{msg}</div>}
+        <div style={{ color: "#60a5fa", fontSize: 12 }}>Apunta al QR de la etiqueta</div>
+        {/* Fallback button */}
+        <button onClick={() => inputRef.current?.click()}
+          style={{ padding: "10px 20px", borderRadius: 8, border: "1.5px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.1)", color: "#fff", fontSize: 13, cursor: "pointer" }}>
+          📁 Usar foto de galería
+        </button>
       </div>
     </div>
   );

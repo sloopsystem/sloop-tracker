@@ -584,4 +584,3 @@ function DriverDeliveryCard({ delivery, isTracking, onStartTransit, onDeliver })
     </div>
   );
 }
-}

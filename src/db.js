@@ -1,45 +1,84 @@
 // src/db.js
-// Reemplaza el storage local por Firebase Realtime Database
-// Así conductor y cliente pueden estar en dispositivos distintos
+// API MySQL en Bluehosting — reemplaza Firebase
 
-// src/db.js
-import { db } from "./firebase";
-import { ref, set, onValue, off, remove } from "firebase/database";
-
-const ROOT = "deliveries";
-const CONFIG = "config";
+const API = "https://robustheit.cl/tracker-api";
 
 // ── Entregas ──────────────────────────────────────────────────────────────────
-export function saveDelivery(delivery) {
-  const r = ref(db, `${ROOT}/${delivery.code}`);
-  return set(r, delivery);
+
+export async function saveDelivery(delivery) {
+  await fetch(`${API}/deliveries.php`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(delivery),
+  });
 }
 
-export function deleteDelivery(code) {
-  const r = ref(db, `${ROOT}/${code}`);
-  return remove(r);
+export async function deleteDelivery(code) {
+  await fetch(`${API}/deliveries.php?code=${code}`, { method: "DELETE" });
 }
 
-export function watchDelivery(code, onUpdate) {
-  const r = ref(db, `${ROOT}/${code}`);
-  onValue(r, (snap) => { const d = snap.val(); if (d) onUpdate(d); });
-  return () => off(r);
+export async function getDelivery(code) {
+  const res = await fetch(`${API}/deliveries.php?code=${code}`);
+  if (!res.ok) return null;
+  return res.json();
 }
 
-export function watchAllDeliveries(onUpdate) {
-  const r = ref(db, ROOT);
-  onValue(r, (snap) => { onUpdate(snap.val() || {}); });
-  return () => off(r);
+export async function getAllDeliveries() {
+  const res = await fetch(`${API}/deliveries.php`);
+  if (!res.ok) return {};
+  return res.json();
 }
 
-// ── Config global (nombre empresa, PIN) ───────────────────────────────────────
-export function saveConfig(cfg) {
-  return set(ref(db, CONFIG), cfg);
+// Polling — llama onUpdate cada X ms con los datos actuales
+export function watchDelivery(code, onUpdate, interval = 3000) {
+  let active = true;
+  const poll = async () => {
+    if (!active) return;
+    try {
+      const data = await getDelivery(code);
+      if (data) onUpdate(data);
+    } catch (_) {}
+    if (active) setTimeout(poll, interval);
+  };
+  poll();
+  return () => { active = false; };
 }
 
-export function watchConfig(onUpdate) {
-  const r = ref(db, CONFIG);
-  onValue(r, (snap) => { onUpdate(snap.val() || {}); });
-  return () => off(r);
+export function watchAllDeliveries(onUpdate, interval = 3000) {
+  let active = true;
+  const poll = async () => {
+    if (!active) return;
+    try {
+      const data = await getAllDeliveries();
+      onUpdate(data);
+    } catch (_) {}
+    if (active) setTimeout(poll, interval);
+  };
+  poll();
+  return () => { active = false; };
 }
 
+// ── Config ────────────────────────────────────────────────────────────────────
+
+export async function saveConfig(cfg) {
+  await fetch(`${API}/config.php`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  });
+}
+
+export function watchConfig(onUpdate, interval = 5000) {
+  let active = true;
+  const poll = async () => {
+    if (!active) return;
+    try {
+      const res = await fetch(`${API}/config.php`);
+      const data = await res.json();
+      onUpdate(data);
+    } catch (_) {}
+    if (active) setTimeout(poll, interval);
+  };
+  poll();
+  return () => { active = false; };
+}

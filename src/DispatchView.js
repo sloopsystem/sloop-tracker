@@ -47,10 +47,8 @@ export default function DispatchView() {
   };
 
   const saveLabel = (labelData) => {
-  console.log("Email:", labelData.to?.email);
     const updated = { ...delivery, label: labelData };
     saveDelivery(updated);
-    // Enviar email de confirmación al destinatario si tiene email
     if (labelData.to?.email) {
       sendEmail({
         to: labelData.to.email,
@@ -69,14 +67,13 @@ export default function DispatchView() {
     setTimeout(() => setPinSaved(false), 2000);
   };
 
-  const activeList = Object.values(deliveries).filter(d => d.status !== "delivered");
-  const doneList   = Object.values(deliveries).filter(d => d.status === "delivered");
+  const activeList = Object.values(deliveries).filter(d => d && d.status !== "delivered");
+  const doneList   = Object.values(deliveries).filter(d => d && d.status === "delivered");
 
   return (
     <div style={{ padding: "0 0 40px" }}>
       {showModal && delivery && <LabelModal delivery={delivery} onSave={saveLabel} onClose={() => setShowModal(false)} />}
 
-      {/* Header */}
       <div style={{ background: "#0f172a", padding: "20px 20px 16px", borderBottom: "2px solid #7c3aed", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <div style={{ color: "#a78bfa", fontSize: 11, fontFamily: "monospace", letterSpacing: 2, marginBottom: 4 }}>PANEL DE DESPACHO</div>
@@ -94,7 +91,6 @@ export default function DispatchView() {
         </div>
       </div>
 
-      {/* Config panel */}
       {showConfig && (
         <div style={{ background: "#1e293b", borderBottom: "1px solid #334155", padding: 16 }}>
           <div style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace", marginBottom: 12 }}>⚙️ CONFIGURACIÓN</div>
@@ -111,7 +107,6 @@ export default function DispatchView() {
       )}
 
       <div style={{ padding: "16px 16px 0" }}>
-
         {activeList.length === 0 && (
           <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 16 }}>
             <div style={{ fontSize: 36, marginBottom: 10 }}>📦</div>
@@ -146,9 +141,14 @@ export default function DispatchView() {
 }
 
 function DeliveryCard({ delivery, selected, onSelect, onEdit, onPrint, onDelete, done }) {
-  const { code, status, label = {}, currentPos, trail, lastUpdate } = delivery;
+  const code = delivery?.code || "";
+  const status = delivery?.status || "pending";
+  const label = delivery?.label || {};
+  const currentPos = delivery?.currentPos || null;
+  const trail = delivery?.trail || [];
+  const lastUpdate = delivery?.lastUpdate || null;
   const s = STATUS[status] || STATUS.pending;
-  const to = label.to || {};
+  const to = label?.to || {};
 
   return (
     <div style={{ background: "#1e293b", borderRadius: 12, marginBottom: 12, overflow: "hidden", border: selected ? `1.5px solid ${s.color}` : "1.5px solid #334155", opacity: done ? 0.6 : 1 }}>

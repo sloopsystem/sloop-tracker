@@ -35,8 +35,13 @@ export function watchDelivery(code, onUpdate, interval = 3000) {
   const poll = async () => {
     if (!active) return;
     try {
-      const data = await getDelivery(code);
-      if (data) onUpdate(data);
+      const res = await fetch(`${API}/deliveries.php?code=${encodeURIComponent(code)}`);
+      if (res.status === 404) {
+        onUpdate(null);
+      } else if (res.ok) {
+        const data = await res.json();
+        onUpdate(data);
+      }
     } catch (_) {}
     if (active) setTimeout(poll, interval);
   };

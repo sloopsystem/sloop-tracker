@@ -172,9 +172,26 @@ function DeliveryModal({ onConfirm, onClose, pin }) {
     const file = e.target.files?.[0];
     if (!file) return;
     setPhotoFile(file);
-    const reader = new FileReader();
-    reader.onload = (ev) => setPhoto(ev.target.result);
-    reader.readAsDataURL(file);
+
+    // Compress image before storing as base64
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1200;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      // Compress to JPEG at 70% quality
+      setPhoto(canvas.toDataURL("image/jpeg", 0.7));
+    };
+    img.src = url;
   };
 
   const goToPin = () => {
@@ -566,4 +583,5 @@ function DriverDeliveryCard({ delivery, isTracking, onStartTransit, onDeliver })
       </div>
     </div>
   );
+}
 }
